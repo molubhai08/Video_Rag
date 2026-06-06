@@ -57,6 +57,28 @@ active_tasks = {}
 active_tasks_lock = threading.Lock()
 
 # ── YouTube helpers (from test.py patterns) ──────────────────────────────────
+def _write_cookies_from_env():
+    """
+    If YOUTUBE_COOKIES_B64 env var is set, decode it and write cookies.txt
+    next to app.py. Only writes once per process start.
+    """
+    b64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+    if not b64:
+        return
+    target = BASE_DIR / "cookies.txt"
+    if target.exists():
+        return  # already written this session
+    try:
+        import base64 as _b64
+        target.write_bytes(_b64.b64decode(b64))
+        logger.info(f"Decoded YOUTUBE_COOKIES_B64 → {target}")
+    except Exception as e:
+        logger.warning(f"Failed to decode YOUTUBE_COOKIES_B64: {e}")
+
+# Write cookies from env at startup
+_write_cookies_from_env()
+
+
 def get_youtube_client():
     """Create a YouTubeTranscriptApi instance, optionally with loaded cookies if available."""
     base_dir = Path(__file__).resolve().parent
