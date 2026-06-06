@@ -131,8 +131,8 @@ def fetch_transcript(video_id: str) -> list[dict]:
 
 
 # ── Two-level chunking ────────────────────────────────────────────────────────
-TARGET_WORDS = 450      # ~400-500 words per chunk (1-3 min)
-OVERLAP_WORDS = 75      # ~75-word overlap between chunks
+TARGET_WORDS = 450      # ~450 words per chunk
+OVERLAP_WORDS = 100     # ~100-word overlap between chunks
 
 
 def count_words(text: str) -> int:

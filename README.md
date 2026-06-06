@@ -4,6 +4,13 @@ A premium, YouTube-style web application that performs Retrieval-Augmented Gener
 
 ---
 
+### **Submission Deliverables**
+- **Solution Writeup (PDF)**: [`solution_writeup.pdf` in root directory](solution_writeup.pdf)
+- **Demo & Explainer Video**: [Google Drive Video Link](https://drive.google.com/file/d/1xJhp6rtrXSHlRKektrkxna3-oFBTugUL/view?usp=sharing)
+- **GitHub Repository**: [https://github.com/molubhai08/Video_Rag](https://github.com/molubhai08/Video_Rag)
+
+---
+
 ## Features
 - **YouTube Transcript Processing**: Automatically downloads and processes English transcripts.
 - **Two-Level Retrieval**: Semantic chunking of 450 words + 100-word overlap (Level 1) combined with token-level keyword overlap alignment (Level 2) to pinpoint exact timestamps.

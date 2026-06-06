@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local transcript cache
 cache/
+
+# Large videos and images
+video/
