@@ -45,7 +45,8 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback_secret_key")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-CACHE_DIR = Path("cache")
+BASE_DIR = Path(__file__).resolve().parent
+CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 def get_cache_file(video_id: str) -> Path:
@@ -58,9 +59,10 @@ active_tasks_lock = threading.Lock()
 # ── YouTube helpers (from test.py patterns) ──────────────────────────────────
 def get_youtube_client():
     """Create a YouTubeTranscriptApi instance, optionally with loaded cookies if available."""
+    base_dir = Path(__file__).resolve().parent
     cookies_paths = [
-        Path("www.youtube.com_cookies.txt"),
-        Path("cookies.txt"),
+        base_dir / "www.youtube.com_cookies.txt",
+        base_dir / "cookies.txt",
     ]
     for cp in cookies_paths:
         if cp.exists():
