@@ -42,3 +42,7 @@ cache/
 
 # Large videos and images
 video/
+
+# Scratch folder and PDF writeup
+scratch/
+solution_writeup.pdf
