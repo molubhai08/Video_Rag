@@ -56,7 +56,28 @@ active_tasks = {}
 active_tasks_lock = threading.Lock()
 
 # ── YouTube helpers (from test.py patterns) ──────────────────────────────────
-ytt_api = YouTubeTranscriptApi()
+def get_youtube_client():
+    """Create a YouTubeTranscriptApi instance, optionally with loaded cookies if available."""
+    cookies_paths = [
+        Path("www.youtube.com_cookies.txt"),
+        Path("cookies.txt"),
+    ]
+    for cp in cookies_paths:
+        if cp.exists():
+            try:
+                import requests
+                from http.cookiejar import MozillaCookieJar
+                session = requests.Session()
+                cj = MozillaCookieJar(str(cp))
+                cj.load(ignore_discard=True, ignore_expires=True)
+                session.cookies = cj
+                logger.info(f"Loaded YouTube authentication cookies from {cp}")
+                return YouTubeTranscriptApi(http_client=session)
+            except Exception as e:
+                logger.warning(f"Failed to load cookies from {cp}: {e}")
+                
+    logger.info("No YouTube authentication cookies found. Using default client.")
+    return YouTubeTranscriptApi()
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -77,6 +98,7 @@ def fetch_transcript(video_id: str) -> list[dict]:
     Fetch English transcript. Returns list of:
       {'text': '...', 'start': 0.0, 'duration': 4.5}
     """
+    ytt_api = get_youtube_client()
     transcript = ytt_api.fetch(video_id, languages=["en"])
     return [
         {"text": snippet.text, "start": snippet.start, "duration": snippet.duration}

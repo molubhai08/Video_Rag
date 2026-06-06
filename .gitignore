@@ -33,3 +33,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Cookies (YouTube session credentials)
+*cookies.txt
+
+# Local transcript cache
+cache/
