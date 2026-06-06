@@ -1,0 +1,35 @@
+# Environment & secrets
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Transcript & index cache
+transcript_cache.json
+*_cache.json
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SRT exports
+*.srt
+
+# Logs
+*.log

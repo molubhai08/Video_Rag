@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PodcastBot — AI-Powered Video Q&amp;A</title>
+  <meta name="description" content="Ask questions about any YouTube podcast and jump to the exact timestamp. Powered by TF-IDF semantic search and Groq AI." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css?v=6" />
+</head>
+<body>
+
+  <!-- ── TOP NAVBAR (YouTube-style) ── -->
+  <header class="yt-navbar" role="banner">
+    <div class="navbar-left">
+      <div class="logo-icon-wrap">🎙️</div>
+      <div class="logo-text">
+        <span class="logo-title">PodcastBot</span>
+        <span class="logo-badge">AI</span>
+      </div>
+    </div>
+
+    <div class="navbar-center">
+      <div class="url-search-bar">
+        <!-- YouTube-style search icon -->
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input
+          id="video-url-input"
+          type="text"
+          class="url-input"
+          placeholder="Paste YouTube URL and press Load..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="YouTube Video URL"
+        />
+        <button id="load-btn" class="load-btn" aria-label="Load video">
+          <span class="btn-text">Load</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+      </div>
+      <div id="load-status" class="load-status" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="navbar-right">
+      <div id="chat-status-badge" class="chat-status-badge status-idle">Not loaded</div>
+    </div>
+  </header>
+
+  <!-- ── MAIN LAYOUT ── -->
+  <div class="yt-layout">
+
+    <!-- ── VIDEO + META COLUMN (left, like YouTube main) ── -->
+    <section class="video-column">
+
+      <!-- Video Player (the star of the show) -->
+      <div class="video-player-wrap" id="video-wrapper">
+        <div id="player-placeholder" class="player-placeholder">
+          <div class="placeholder-play-ring">
+            <div class="placeholder-play-icon">
+              <!-- YouTube-style play triangle -->
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <path class="yt-play-bg" d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z"/>
+                <path class="yt-play-arrow" d="M45 24L27 14v20"/>
+              </svg>
+            </div>
+          </div>
+          <p class="placeholder-text">Paste a YouTube URL above and click <strong>Load</strong></p>
+          <p class="placeholder-sub">AI will answer questions &amp; jump to the exact moment</p>
+        </div>
+        <div id="yt-player-container" hidden></div>
+      </div>
+
+      <!-- Below-video meta (like YouTube's title/info area) -->
+      <div class="video-meta-area">
+
+        <!-- Title row -->
+        <div class="video-title-row">
+          <div class="video-title-text">
+            <h2 class="video-title" id="video-title-display">Load a video to begin</h2>
+            <p class="video-subtitle">AI-powered semantic search · Groq LLM · TF-IDF indexing</p>
+          </div>
+          <div class="video-title-actions">
+            <div id="video-info" class="stats-pills" hidden>
+              <span class="stat-pill">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span id="info-chunks">—</span> chunks
+              </span>
+              <span class="stat-pill">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span id="info-duration">—</span>
+              </span>
+              <span class="stat-pill stat-pill-snippets">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span id="info-snippets">—</span> snippets
+              </span>
+              <span class="stat-pill stat-pill-status">
+                <span class="status-dot"></span>
+                <span class="info-value status-ready" id="info-status">—</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="meta-divider"></div>
+
+        <!-- How it works row (like YouTube's description) -->
+        <div class="how-it-works">
+          <div class="how-title">How it works</div>
+          <div class="how-steps">
+            <div class="how-step">
+              <span class="step-num">1</span>
+              <span>Paste any YouTube URL &amp; load</span>
+            </div>
+            <div class="how-step">
+              <span class="step-num">2</span>
+              <span>Transcript is fetched &amp; chunked</span>
+            </div>
+            <div class="how-step">
+              <span class="step-num">3</span>
+              <span>Ask a question in the AI chat</span>
+            </div>
+            <div class="how-step">
+              <span class="step-num">4</span>
+              <span>Video jumps to the exact timestamp</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── CHAT SIDEBAR (right, like YouTube live chat) ── -->
+    <aside class="chat-sidebar">
+
+      <!-- Chat header (YouTube live chat style) -->
+      <div class="chat-sidebar-header">
+        <div class="chat-sidebar-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          AI Chat
+        </div>
+        <div class="chat-sidebar-sub">Ask anything about this video</div>
+      </div>
+
+      <!-- Messages area -->
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+        <!-- Welcome message -->
+        <div class="message bot-message welcome-message">
+          <div class="message-avatar bot-avatar">🤖</div>
+          <div class="message-content">
+            <div class="message-bubble">
+              <p>👋 Welcome to <strong>PodcastBot</strong>!</p>
+              <p>Load a YouTube video above, then ask me anything about it — I'll jump the video to the <strong>exact moment</strong> being discussed.</p>
+              <p class="example-label">Try asking:</p>
+              <div class="example-queries" id="example-queries">
+                <button class="example-chip" data-query="What is first-principles thinking?">What is first-principles thinking?</button>
+                <button class="example-chip" data-query="What does Elon think about AI?">What does Elon think about AI?</button>
+                <button class="example-chip" data-query="What are Elon's views on education?">What are Elon's views on education?</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat input (pinned at bottom like YouTube live chat) -->
+      <div class="chat-input-area">
+        <div class="input-wrapper">
+          <textarea
+            id="question-input"
+            class="question-input"
+            placeholder="Ask about this video..."
+            rows="1"
+            aria-label="Your question"
+          ></textarea>
+          <button id="send-btn" class="send-btn" aria-label="Send question" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+        <p class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> newline</p>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- Timestamp jump toast -->
+  <div id="jump-toast" class="jump-toast" aria-live="assertive" hidden>
+    <span>⏱️</span>
+    <span id="jump-toast-text">Jumping to 00:00:00</span>
+  </div>
+
+  <script src="/static/js/main.js?v=6"></script>
+</body>
+</html>
