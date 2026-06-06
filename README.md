@@ -1,14 +1,15 @@
 # PodcastBot — Video RAG Q&A App
 
-A premium, YouTube-style web application that performs Retrieval-Augmented Generation (RAG) on YouTube video transcripts. Paste a YouTube URL, index the transcript, and ask questions. The app answers using Groq's Llama 3.1 model and can automatically seek the YouTube video player to the exact relevant timestamp.
+A premium, YouTube-style web application that performs Retrieval-Augmented Generation (RAG) on YouTube video transcripts. Paste a YouTube URL, index the transcript, and ask questions. The app answers using Groq's Llama 3.1 model and automatically seeks the YouTube video player to the exact relevant timestamp.
 
 ---
 
 ## Features
 - **YouTube Transcript Processing**: Automatically downloads and processes English transcripts.
-- **Two-Level Retrieval**: Semantic chunking + TF-IDF index (Level 1) combined with keyword overlap alignment (Level 2) to pinpoint exact timestamps.
+- **Two-Level Retrieval**: Semantic chunking of 450 words + 100-word overlap (Level 1) combined with token-level keyword overlap alignment (Level 2) to pinpoint exact timestamps.
 - **Interactive YouTube Player**: Synchronized with Q&A timestamps (click a timestamp to jump in the video).
 - **Premium YouTube-style UI**: Glassmorphic dark mode layout featuring a main video player area and live-chat style Q&A sidebar.
+- **Local JSON Caching**: Caches transcript and chunk indices to avoid redundant external network requests and bypass rate limits.
 
 ---
 
@@ -39,51 +40,22 @@ python app.py
 ```
 Go to `http://127.0.0.1:5000` in your web browser.
 
-#### Production Mode (Gunicorn - Unix/Linux)
-```bash
-gunicorn --workers=1 --threads=4 --timeout 120 app:app
-```
-
 ---
 
-## Azure Deployment (Azure App Service)
+## How It Works
 
-This application is ready for deployment on **Azure App Service** (Linux, Python 3.x).
-
-### Step 1: Create the Web App in Azure Portal
-1. Go to the [Azure Portal](https://portal.azure.com/).
-2. Click **Create a resource** -> **Web App**.
-3. Configure the following:
-   - **Publish**: Code
-   - **Runtime stack**: Python 3.10 or Python 3.11
-   - **Operating System**: Linux
-   - **Pricing Plan**: Free (F1) for testing, or Basic (B1) for continuous availability.
-
-### Step 2: Configure Environment Variables
-1. Navigate to your Web App resource in the Azure Portal.
-2. Under **Settings** (left sidebar), click **Configuration** (or **Environment Variables** in newer UI).
-3. Add a new Application Setting:
-   - **Name**: `GROQ_API_KEY`
-   - **Value**: *[Your Groq API Key]*
-4. Add another setting:
-   - **Name**: `FLASK_SECRET_KEY`
-   - **Value**: *[Any random secure string]*
-5. Click **Save** at the top.
-
-### Step 3: Configure the Startup Command
-1. In the Web App menu, go to **Settings** -> **Configuration** -> **General settings**.
-2. Locate the **Startup Command** field.
-3. Enter the following to execute our custom startup script:
-   ```bash
-   bash startup.sh
-   ```
-4. Click **Save**.
-
-### Step 4: Deploy the Code
-You can deploy your code using the **Azure Resources extension** in VS Code:
-1. Install the **Azure Resources** and **Azure App Service** extensions in VS Code.
-2. Sign in to your Azure Account.
-3. In the Azure sidebar tab, expand your subscription and locate your Web App.
-4. Right-click the Web App name and select **Deploy to Web App...**.
-5. Select the `video_rag` root folder and confirm.
-6. Once deployment finishes, your app will be live at `https://<your-app-name>.azurewebsites.net`!
+1. **Extraction**: The user provides a YouTube URL. The system extracts the 11-character `video_id`.
+2. **Transcript Processing & Chunking**:
+   - The app attempts to load the cached transcript. If not cached, it fetches the transcript using the custom YouTube client wrapper `youtube-transcript-api`.
+   - **Level 1 Chunking**: Groups transcript snippets into semantic chunks of target ~450 words with a 100-word sliding overlap to preserve contextual boundaries.
+3. **Retrieval**:
+   - We fit a `TfidfVectorizer` (unigrams + bigrams) on the fly over the extracted chunks.
+   - We vectorize the user query and calculate cosine similarity scores. The top 3 chunks are selected.
+4. **Level 2 Refinement (Timestamp Pinpointing)**:
+   - Within the top-scoring chunk, the app calculates token-level word overlaps between the query and each individual subtitle snippet.
+   - The snippet with the highest overlap is selected as the exact seeking timestamp.
+5. **Answer Generation**:
+   - The top 3 chunks are formatted as context text alongside their timestamps.
+   - The context and user query are passed to the Groq API.
+6. **Seeking Interface**:
+   - Clicking a timestamp seeks the embedded YouTube player to the exact moment in the video.
