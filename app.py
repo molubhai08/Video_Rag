@@ -326,6 +326,30 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/debug")
+def api_debug():
+    """Temporary debug endpoint to inspect path resolution on Azure."""
+    base_dir = Path(__file__).resolve().parent
+    cwd = Path.cwd()
+    cookies_paths = [
+        base_dir / "www.youtube.com_cookies.txt",
+        base_dir / "cookies.txt",
+        cwd / "www.youtube.com_cookies.txt",
+        cwd / "cookies.txt",
+    ]
+    files_in_base = [f.name for f in base_dir.iterdir()] if base_dir.exists() else []
+    return jsonify({
+        "cwd": str(cwd),
+        "base_dir": str(base_dir),
+        "files_in_base_dir": files_in_base,
+        "cookies_search_results": {
+            str(p): p.exists() for p in cookies_paths
+        },
+        "cache_dir": str(CACHE_DIR),
+        "cache_dir_exists": CACHE_DIR.exists(),
+    })
+
+
 @app.route("/api/status")
 def api_status():
     video_id = request.args.get("video_id", "").strip()
