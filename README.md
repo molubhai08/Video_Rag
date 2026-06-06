@@ -5,7 +5,7 @@ A premium, YouTube-style web application that performs Retrieval-Augmented Gener
 ---
 
 ### **Submission Deliverables**
-- **Solution Writeup**: Submitted via PDF link in the submission form.
+- **Solution Writeup (PDF)**: [Google Drive PDF Link](https://drive.google.com/file/d/1XAtN8iDalxZ0C7P-JBGht_PibM_rAtMa/view?usp=sharing)
 - **Demo & Explainer Video**: [Google Drive Video Link](https://drive.google.com/file/d/1xJhp6rtrXSHlRKektrkxna3-oFBTugUL/view?usp=sharing)
 - **GitHub Repository**: [https://github.com/molubhai08/Video_Rag](https://github.com/molubhai08/Video_Rag)
 
