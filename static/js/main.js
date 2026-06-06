@@ -154,7 +154,7 @@ async function loadVideo() {
     if (initData.error) throw new Error(initData.error);
 
     // Poll /api/status until ready or error
-    await pollUntilReady();
+    await pollUntilReady(initData.video_id);
 
   } catch (err) {
     setLoadStatus(`✗ ${err.message}`, 'error');
@@ -164,11 +164,11 @@ async function loadVideo() {
   }
 }
 
-async function pollUntilReady() {
+async function pollUntilReady(videoId) {
   return new Promise((resolve, reject) => {
     const interval = setInterval(async () => {
       try {
-        const res  = await fetch('/api/status');
+        const res  = await fetch(`/api/status?video_id=${encodeURIComponent(videoId)}`);
         const data = await res.json();
 
         // Update live stage text
@@ -296,7 +296,7 @@ async function sendQuestion() {
     const res = await fetch('/api/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, video_id: appState.videoId }),
     });
     const data = await res.json();
 

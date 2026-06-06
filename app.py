@@ -5,7 +5,7 @@ Podcast Q&A Bot — Flask Backend
 - Two-level chunking: semantic chunks (300-600 words) + fine timestamp refinement
 - TF-IDF retrieval (scikit-learn) — no heavy embeddings needed
 - Groq llama-3.1-8b-instant for answer generation
-- Caches transcript + chunks to transcript_cache.json
+- Caches transcript + chunks to cache/<video_id>.json
 """
 
 import os
@@ -44,20 +44,16 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback_secret_key")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-CACHE_FILE = Path("transcript_cache.json")
 
-# ── Global state (in-memory, per session) ───────────────────────────────────
-state = {
-    "video_id": None,
-    "raw_snippets": [],       # [{text, start, duration}, ...]
-    "chunks": [],             # [{chunk_id, start, end, text, snippets}, ...]
-    "vectorizer": None,
-    "tfidf_matrix": None,
-    "status": "idle",         # idle | loading | ready | error
-    "stage": "",              # human-readable progress message
-    "error": None,
-}
-_init_lock = threading.Lock()
+CACHE_DIR = Path("cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+def get_cache_file(video_id: str) -> Path:
+    return CACHE_DIR / f"{video_id}.json"
+
+# ── Global active tasks (in-memory, for tracking loading progress per video_id) ──
+active_tasks = {}
+active_tasks_lock = threading.Lock()
 
 # ── YouTube helpers (from test.py patterns) ──────────────────────────────────
 ytt_api = YouTubeTranscriptApi()
@@ -166,24 +162,6 @@ def build_tfidf_index(chunks: list[dict]):
     return vectorizer, matrix
 
 
-def search_chunks(query: str, top_k: int = 3) -> list[dict]:
-    """Return top-k most relevant chunks for a query."""
-    if state["vectorizer"] is None:
-        return []
-
-    q_vec = state["vectorizer"].transform([query])
-    sims = cosine_similarity(q_vec, state["tfidf_matrix"]).flatten()
-    top_indices = np.argsort(sims)[::-1][:top_k]
-
-    results = []
-    for idx in top_indices:
-        chunk = state["chunks"][idx].copy()
-        chunk["score"] = float(sims[idx])
-        results.append(chunk)
-
-    return results
-
-
 # ── Level 2: Fine-grained timestamp within a chunk ──────────────────────────
 def find_fine_timestamp(query: str, chunk: dict) -> tuple[float, str]:
     """
@@ -287,17 +265,19 @@ def save_cache(video_id: str, snippets: list[dict], chunks: list[dict]):
         "snippets": snippets,
         "chunks": slim_chunks,
     }
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+    cache_file = get_cache_file(video_id)
+    with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
-    logger.info(f"Cache saved → {CACHE_FILE}")
+    logger.info(f"Cache saved → {cache_file}")
 
 
 def load_cache(video_id: str) -> tuple[list, list] | tuple[None, None]:
     """Load cached transcript + chunks if they exist for this video_id."""
-    if not CACHE_FILE.exists():
+    cache_file = get_cache_file(video_id)
+    if not cache_file.exists():
         return None, None
     try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        with open(cache_file, "r", encoding="utf-8") as f:
             cache = json.load(f)
         if cache.get("video_id") != video_id:
             return None, None
@@ -312,7 +292,7 @@ def load_cache(video_id: str) -> tuple[list, list] | tuple[None, None]:
         logger.info(f"Cache loaded for {video_id}: {len(chunks)} chunks")
         return snippets, chunks
     except Exception as e:
-        logger.warning(f"Cache load failed: {e}")
+        logger.warning(f"Cache load failed for {video_id}: {e}")
         return None, None
 
 
@@ -324,17 +304,44 @@ def index():
 
 @app.route("/api/status")
 def api_status():
+    video_id = request.args.get("video_id", "").strip()
+    if not video_id:
+        return jsonify({"error": "No video_id provided"}), 400
+
+    with active_tasks_lock:
+        task = active_tasks.get(video_id)
+
+    if not task:
+        # Check if cache file exists for this video
+        snippets, chunks = load_cache(video_id)
+        if snippets is not None and chunks is not None:
+            return jsonify({
+                "status": "ready",
+                "stage": f"Loaded {len(chunks)} chunks from cache ⚡",
+                "video_id": video_id,
+                "chunks": len(chunks),
+                "snippet_count": len(snippets),
+                "duration_hms": seconds_to_hms(
+                    snippets[-1]["start"] + snippets[-1]["duration"] if snippets else 0
+                ),
+                "error": None
+            })
+        return jsonify({"status": "idle", "stage": "", "video_id": video_id, "error": None})
+
+    snippets = task.get("raw_snippets", [])
+    chunks = task.get("chunks", [])
+
     return jsonify({
-        "status":   state["status"],
-        "stage":    state["stage"],
-        "video_id": state["video_id"],
-        "chunks":   len(state["chunks"]),
-        "snippet_count": len(state["raw_snippets"]),
+        "status":   task["status"],
+        "stage":    task["stage"],
+        "video_id": task["video_id"],
+        "chunks":   len(chunks),
+        "snippet_count": len(snippets),
         "duration_hms": seconds_to_hms(
-            state["raw_snippets"][-1]["start"] + state["raw_snippets"][-1]["duration"]
-            if state["raw_snippets"] else 0
+            snippets[-1]["start"] + snippets[-1]["duration"]
+            if snippets else 0
         ),
-        "error":    state["error"],
+        "error":    task["error"],
     })
 
 
@@ -342,8 +349,8 @@ def api_status():
 def api_init():
     """
     POST { "url": "<youtube url or video id>" }
-    Immediately returns {status: loading} and processes in a background thread.
-    Poll /api/status to track progress.
+    Immediately returns {status: loading, video_id: ...} and processes in a background thread.
+    Poll /api/status?video_id=<video_id> to track progress.
     """
     data = request.get_json(force=True)
     url = data.get("url", "").strip()
@@ -351,85 +358,91 @@ def api_init():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    # Prevent double-init
-    if state["status"] == "loading":
-        return jsonify({"status": "loading", "stage": state["stage"]}), 202
-
     video_id = extract_video_id(url)
     logger.info(f"Initializing for video_id: {video_id}")
 
-    # Reset state
-    state["status"] = "loading"
-    state["stage"]  = "Starting..."
-    state["error"]  = None
-    state["video_id"] = video_id
+    with active_tasks_lock:
+        # Prevent double-init if already loading
+        if video_id in active_tasks and active_tasks[video_id]["status"] == "loading":
+            return jsonify({"status": "loading", "stage": active_tasks[video_id]["stage"], "video_id": video_id}), 202
 
-    def _worker():
-        with _init_lock:
-            try:
-                # Stage 1 — cache check
-                state["stage"] = "Checking cache..."
-                snippets, chunks = load_cache(video_id)
+        # Initialize/reset active task state
+        active_tasks[video_id] = {
+            "status": "loading",
+            "stage": "Starting...",
+            "error": None,
+            "video_id": video_id,
+            "raw_snippets": [],
+            "chunks": [],
+        }
 
-                if snippets is None:
-                    # Stage 2 — connect to YouTube
-                    state["stage"] = "Connecting to YouTube..."
-                    logger.info("No cache — fetching from YouTube...")
+    def _worker(vid):
+        try:
+            # Stage 1 — cache check
+            with active_tasks_lock:
+                active_tasks[vid]["stage"] = "Checking cache..."
+            snippets, chunks = load_cache(vid)
 
-                    # Stage 3 — download transcript
-                    state["stage"] = "Downloading transcript (this may take 10–30s)..."
-                    snippets = fetch_transcript(video_id)
+            if snippets is None:
+                # Stage 2 — connect to YouTube
+                with active_tasks_lock:
+                    active_tasks[vid]["stage"] = "Connecting to YouTube..."
+                logger.info(f"No cache — fetching from YouTube for {vid}...")
 
-                    # Stage 4 — chunking
-                    state["stage"] = f"Chunking {len(snippets)} transcript snippets..."
-                    chunks = build_chunks(snippets)
+                # Stage 3 — download transcript
+                with active_tasks_lock:
+                    active_tasks[vid]["stage"] = "Downloading transcript (this may take 10–30s)..."
+                snippets = fetch_transcript(vid)
 
-                    # Stage 5 — save cache
-                    state["stage"] = "Saving to cache..."
-                    save_cache(video_id, snippets, chunks)
-                else:
-                    state["stage"] = f"Loaded {len(chunks)} chunks from cache ⚡"
+                # Stage 4 — chunking
+                with active_tasks_lock:
+                    active_tasks[vid]["stage"] = f"Chunking {len(snippets)} transcript snippets..."
+                chunks = build_chunks(snippets)
 
-                # Stage 6 — TF-IDF index
-                state["stage"] = f"Building TF-IDF index over {len(chunks)} chunks..."
-                vectorizer, tfidf_matrix = build_tfidf_index(chunks)
-
-                # Done — update state
-                state["raw_snippets"]  = snippets
-                state["chunks"]        = chunks
-                state["vectorizer"]    = vectorizer
-                state["tfidf_matrix"]  = tfidf_matrix
-                state["status"]        = "ready"
-                state["stage"]         = f"Ready — {len(chunks)} chunks indexed"
-                logger.info("Init complete.")
-
-            except TranscriptsDisabled:
-                err = "Transcripts are disabled for this video."
-            except NoTranscriptFound:
-                err = "No English transcript found for this video."
-            except VideoUnavailable:
-                err = "Video is unavailable."
-            except (IpBlocked, RequestBlocked):
-                err = "YouTube is blocking requests from this IP. Try again in a few minutes."
-            except Exception as e:
-                err = f"Unexpected error: {str(e)}"
+                # Stage 5 — save cache
+                with active_tasks_lock:
+                    active_tasks[vid]["stage"] = "Saving to cache..."
+                save_cache(vid, snippets, chunks)
             else:
-                return  # success path exits here
+                with active_tasks_lock:
+                    active_tasks[vid]["stage"] = f"Loaded {len(chunks)} chunks from cache ⚡"
 
-            # Error path
-            state["status"] = "error"
-            state["stage"]  = err
-            state["error"]  = err
-            logger.error(f"Init failed: {err}")
+            # Done — update state
+            with active_tasks_lock:
+                active_tasks[vid]["raw_snippets"]  = snippets
+                active_tasks[vid]["chunks"]        = chunks
+                active_tasks[vid]["status"]        = "ready"
+                active_tasks[vid]["stage"]         = f"Ready — {len(chunks)} chunks indexed"
+            logger.info(f"Init complete for {vid}.")
 
-    threading.Thread(target=_worker, daemon=True).start()
-    return jsonify({"status": "loading", "stage": state["stage"]}), 202
+        except TranscriptsDisabled:
+            err = "Transcripts are disabled for this video."
+        except NoTranscriptFound:
+            err = "No English transcript found for this video."
+        except VideoUnavailable:
+            err = "Video is unavailable."
+        except (IpBlocked, RequestBlocked):
+            err = "YouTube is blocking requests from this IP. Try again in a few minutes."
+        except Exception as e:
+            err = f"Unexpected error: {str(e)}"
+        else:
+            return  # success path exits here
+
+        # Error path
+        with active_tasks_lock:
+            active_tasks[vid]["status"] = "error"
+            active_tasks[vid]["stage"]  = err
+            active_tasks[vid]["error"]  = err
+        logger.error(f"Init failed for {vid}: {err}")
+
+    threading.Thread(target=_worker, args=(video_id,), daemon=True).start()
+    return jsonify({"status": "loading", "stage": "Starting...", "video_id": video_id}), 202
 
 
 @app.route("/api/ask", methods=["POST"])
 def api_ask():
     """
-    POST { "question": "What is first-principles thinking?" }
+    POST { "question": "...", "video_id": "..." }
     Returns:
       {
         answer, timestamp_s, timestamp_hms,
@@ -437,21 +450,47 @@ def api_ask():
         chunk_text, video_id, top_chunks
       }
     """
-    if state["status"] != "ready":
+    data = request.get_json(force=True)
+    question = data.get("question", "").strip()
+    video_id = data.get("video_id", "").strip()
+
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+    if not video_id:
+        return jsonify({"error": "No video_id provided"}), 400
+
+    logger.info(f"Question for {video_id}: {question}")
+
+    # Load transcript snippets and chunks
+    snippets, chunks = None, None
+    with active_tasks_lock:
+        task = active_tasks.get(video_id)
+        if task and task["status"] == "ready":
+            snippets = task["raw_snippets"]
+            chunks = task["chunks"]
+
+    # Fallback to file cache
+    if snippets is None or chunks is None:
+        snippets, chunks = load_cache(video_id)
+
+    if snippets is None or chunks is None:
         return jsonify({
             "error": "Transcript not loaded. Please initialize with a video URL first."
         }), 400
 
-    data = request.get_json(force=True)
-    question = data.get("question", "").strip()
+    # Level 1: TF-IDF retrieval (dynamic fitting, very fast)
+    vectorizer, tfidf_matrix = build_tfidf_index(chunks)
+    
+    # Retrieve top chunks
+    q_vec = vectorizer.transform([question])
+    sims = cosine_similarity(q_vec, tfidf_matrix).flatten()
+    top_indices = np.argsort(sims)[::-1][:3]
 
-    if not question:
-        return jsonify({"error": "No question provided"}), 400
-
-    logger.info(f"Question: {question}")
-
-    # Level 1: TF-IDF retrieval
-    top_chunks = search_chunks(question, top_k=3)
+    top_chunks = []
+    for idx in top_indices:
+        chunk = chunks[idx].copy()
+        chunk["score"] = float(sims[idx])
+        top_chunks.append(chunk)
 
     if not top_chunks:
         return jsonify({"error": "No relevant content found."}), 404
@@ -474,7 +513,7 @@ def api_ask():
         "chunk_start_hms": seconds_to_hms(best_chunk["start"]),
         "chunk_end_hms": seconds_to_hms(best_chunk["end"]),
         "chunk_text": best_chunk["text"][:500] + ("..." if len(best_chunk["text"]) > 500 else ""),
-        "video_id": state["video_id"],
+        "video_id": video_id,
         "relevance_score": round(best_chunk.get("score", 0), 3),
         "top_chunks": [
             {
@@ -489,7 +528,7 @@ def api_ask():
         ],
     }
 
-    logger.info(f"Answer generated. Timestamp: {fine_hms} (score: {best_chunk.get('score', 0):.3f})")
+    logger.info(f"Answer generated for {video_id}. Timestamp: {fine_hms} (score: {best_chunk.get('score', 0):.3f})")
     return jsonify(result)
 
 
